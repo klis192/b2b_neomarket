@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
@@ -26,10 +26,10 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     seller_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sellers.id"), nullable=False, index=True
+        Uuid, ForeignKey("sellers.id"), nullable=False, index=True
     )
     status: Mapped[InvoiceStatus] = mapped_column(
         Enum(InvoiceStatus), nullable=False, default=InvoiceStatus.PENDING
@@ -51,13 +51,13 @@ class InvoiceItem(Base):
     __tablename__ = "invoice_items"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
     )
     sku_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("skus.id"), nullable=False
+        Uuid, ForeignKey("skus.id"), nullable=False
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     # accepted_quantity заполняется при приёмке (None = ещё не принята)

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
@@ -17,7 +17,7 @@ class Seller(Base):
     __tablename__ = "sellers"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -45,10 +45,10 @@ class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
     jti: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
+        Uuid, primary_key=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
+        Uuid, nullable=False, index=True
     )
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -59,7 +59,7 @@ class RefreshBlacklist(Base):
     __tablename__ = "refresh_blacklist"
 
     jti: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
+        Uuid, primary_key=True
     )
     revoked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Integer, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,10 +19,10 @@ class Outbox(Base):
     __tablename__ = "outbox"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     idempotency_key: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), unique=True, nullable=False
+        Uuid, unique=True, nullable=False
     )
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -40,11 +40,11 @@ class ProcessedEvent(Base):
     __tablename__ = "processed_events"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     sender_service: Mapped[str] = mapped_column(String(20), nullable=False)
     idempotency_key: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
+        Uuid, nullable=False
     )
     response_cached: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     processed_at: Mapped[datetime] = mapped_column(
@@ -61,7 +61,7 @@ class ReserveOperation(Base):
     __tablename__ = "reserve_operations"
 
     idempotency_key: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
+        Uuid, primary_key=True
     )
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -74,7 +74,7 @@ class FulfillOperation(Base):
     __tablename__ = "fulfill_operations"
 
     order_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
+        Uuid, primary_key=True
     )
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

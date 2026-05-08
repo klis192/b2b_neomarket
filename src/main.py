@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.database import Base, SessionLocal, engine
-from src.routes import auth, categories
+from src.routes import auth, categories, products
 from src.seed import seed_database
 
 # Импортируем модели, чтобы Base.metadata знал все таблицы
@@ -45,12 +45,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Роутеры — Этап 0: auth + categories
+# Роутеры
 app.include_router(auth.router)
 app.include_router(categories.router)
+app.include_router(products.router)  # Этап 1: US-B2B-01
 
-# Роутеры для следующих этапов (подключаются по мере реализации):
-# app.include_router(products.router)    # Этап 1
+# Роутеры для следующих этапов:
 # app.include_router(skus.router)        # Этап 2
 # app.include_router(invoices.router)    # Этап 6
 # app.include_router(reserve.router)     # Этап 8
