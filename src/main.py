@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.database import Base, SessionLocal, engine
-from src.routes import auth, categories, products
+from src.exceptions import register_exception_handlers
+from src.routes import auth, categories, products, skus
 from src.seed import seed_database
 
 # Импортируем модели, чтобы Base.metadata знал все таблицы
@@ -36,6 +37,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Кастомные обработчики ошибок — формат {"code": "...", "message": "..."}
+register_exception_handlers(app)
+
 # CORS — для фронтенда
 app.add_middleware(
     CORSMiddleware,
@@ -49,6 +53,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(categories.router)
 app.include_router(products.router)  # Этап 1: US-B2B-01
+app.include_router(skus.router)      # Этап 2: US-B2B-02
 
 # Роутеры для следующих этапов:
 # app.include_router(skus.router)        # Этап 2

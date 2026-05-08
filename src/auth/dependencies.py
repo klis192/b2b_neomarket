@@ -13,13 +13,13 @@ from src.auth.jwt_handler import decode_token
 from src.config import settings
 
 
-def get_current_seller(authorization: str = Header(...)) -> uuid.UUID:
+def get_current_seller(authorization: str | None = Header(default=None)) -> uuid.UUID:
     """
     Извлекает seller_id из JWT в заголовке Authorization.
     seller_id ВСЕГДА из токена, НИКОГДА из body/query — защита от IDOR.
     Возвращает UUID продавца.
     """
-    if not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
             detail={"code": "UNAUTHORIZED", "message": "Требуется Bearer токен"},
