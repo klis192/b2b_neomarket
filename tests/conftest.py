@@ -85,15 +85,33 @@ def seed_categories(db):
 
 
 @pytest.fixture
-def seller_id() -> uuid.UUID:
-    """Фиксированный UUID продавца для тестов."""
-    return uuid.UUID("11111111-1111-1111-1111-111111111111")
+def seller_id(db) -> uuid.UUID:
+    """Создаёт продавца в тестовой БД и возвращает его UUID."""
+    from src.models.user import Seller
+    _id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    seller = Seller(
+        id=_id, email="seller1@test.com", password_hash="fake",
+        company_name="Test Co", inn="1234567890",
+        first_name="Test", last_name="Seller",
+    )
+    db.add(seller)
+    db.commit()
+    return _id
 
 
 @pytest.fixture
-def other_seller_id() -> uuid.UUID:
-    """UUID другого продавца — для тестов на ownership."""
-    return uuid.UUID("22222222-2222-2222-2222-222222222222")
+def other_seller_id(db) -> uuid.UUID:
+    """Создаёт второго продавца — для тестов на ownership."""
+    from src.models.user import Seller
+    _id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+    seller = Seller(
+        id=_id, email="seller2@test.com", password_hash="fake",
+        company_name="Other Co", inn="0987654321",
+        first_name="Other", last_name="Seller",
+    )
+    db.add(seller)
+    db.commit()
+    return _id
 
 
 @pytest.fixture

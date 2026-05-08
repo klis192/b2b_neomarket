@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,10 +28,10 @@ class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     seller_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sellers.id"), nullable=False, index=True
+        Uuid, ForeignKey("sellers.id"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -39,7 +39,7 @@ class Product(Base):
         Enum(ProductStatus), nullable=False, default=ProductStatus.CREATED
     )
     category_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("categories.id"), nullable=False
+        Uuid, ForeignKey("categories.id"), nullable=False
     )
 
     # Soft delete
@@ -78,10 +78,10 @@ class ProductImage(Base):
     __tablename__ = "product_images"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("products.id", ondelete="CASCADE"), nullable=False
     )
     url: Mapped[str] = mapped_column(String(1000), nullable=False)
     ordering: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -94,10 +94,10 @@ class ProductCharacteristic(Base):
     __tablename__ = "product_characteristics"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("products.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     value: Mapped[str] = mapped_column(String(500), nullable=False)

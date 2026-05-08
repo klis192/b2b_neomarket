@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
@@ -22,10 +22,10 @@ class SKU(Base):
     __tablename__ = "skus"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("products.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     price: Mapped[int] = mapped_column(Integer, nullable=False)          # цена в копейках
@@ -59,10 +59,10 @@ class SKUCharacteristic(Base):
     __tablename__ = "sku_characteristics"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     sku_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("skus.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("skus.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     value: Mapped[str] = mapped_column(String(500), nullable=False)
