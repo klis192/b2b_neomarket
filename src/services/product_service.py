@@ -20,19 +20,16 @@ from src.schemas.product import ProductCreate, ProductResponse
 
 
 def _product_to_response(product: Product) -> ProductResponse:
-    """Конвертирует ORM-объект в ответ API, формат из спеки."""
+    """Конвертирует ORM-объект в ответ API, формат из openapi."""
     return ProductResponse(
         id=str(product.id),
         title=product.title,
         description=product.description,
         status=product.status.value,
         deleted=product.deleted,
-        # blocked = True, если статус BLOCKED или HARD_BLOCKED
         blocked=product.status in (ProductStatus.BLOCKED, ProductStatus.HARD_BLOCKED),
-        category={
-            "id": str(product.category.id),
-            "name": product.category.name,
-        },
+        category_id=str(product.category_id),
+        category_name=product.category.name if product.category else None,
         images=[
             {"url": img.url, "ordering": img.ordering}
             for img in sorted(product.images, key=lambda x: x.ordering)
@@ -151,7 +148,8 @@ def create_product(
         status=ProductStatus.CREATED.value,
         deleted=False,
         blocked=False,
-        category={"id": str(category.id), "name": category.name},
+        category_id=str(category.id),
+        category_name=category.name,
         images=[
             {"url": img.url, "ordering": img.ordering}
             for img in data.images
