@@ -92,8 +92,8 @@ def test_missing_images_returns_400(client, auth_headers, seed_categories):
 
     resp = client.post(URL, json=data, headers=auth_headers)
 
-    # FastAPI вернёт 422 на невалидные данные (Pydantic min_length=1)
-    assert resp.status_code == 422
+    # Пустой массив images → 400 INVALID_REQUEST
+    assert resp.status_code == 400
 
 
 def test_missing_category_returns_400(client, auth_headers):
@@ -108,29 +108,29 @@ def test_missing_category_returns_400(client, auth_headers):
     resp = client.post(URL, json=data, headers=auth_headers)
 
     assert resp.status_code == 400
-    assert resp.json()["detail"]["code"] == "INVALID_REQUEST"
-    assert "Category not found" in resp.json()["detail"]["message"]
+    assert resp.json()["code"] == "INVALID_REQUEST"
+    assert "Category not found" in resp.json()["message"]
 
 
-def test_create_product_without_auth_returns_422(client, seed_categories):
-    """Запрос без токена → 422 (нет обязательного заголовка)."""
+def test_create_product_without_auth_returns_401(client, seed_categories):
+    """Запрос без токена → 401."""
     data = _valid_product(seed_categories["mono_id"])
 
     resp = client.post(URL, json=data)
 
-    assert resp.status_code == 422
+    assert resp.status_code == 401
 
 
-def test_create_product_empty_title_returns_422(
+def test_create_product_empty_title_returns_400(
     client, auth_headers, seed_categories
 ):
-    """Пустой title → 422."""
+    """Пустой title → 400."""
     data = _valid_product(seed_categories["mono_id"])
     data["title"] = ""
 
     resp = client.post(URL, json=data, headers=auth_headers)
 
-    assert resp.status_code == 422
+    assert resp.status_code == 400
 
 
 def test_create_product_without_characteristics(

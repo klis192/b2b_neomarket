@@ -28,3 +28,16 @@ def create_product(
     Статус = CREATED. На модерацию не отправляется.
     """
     return product_service.create_product(db, seller_id, data)
+
+
+@router.get("/{product_id}", response_model=ProductResponse)
+def get_product(
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """
+    Получить товар по ID (US-B2B-05, базовый).
+    Только свои товары — чужие → 404.
+    """
+    return product_service.get_product_by_id(db, product_id, seller_id)

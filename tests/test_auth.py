@@ -34,7 +34,7 @@ def test_register_duplicate_email_returns_409(client):
     client.post(REGISTER_URL, json=VALID_SELLER)
     resp = client.post(REGISTER_URL, json=VALID_SELLER)
     assert resp.status_code == 409
-    assert resp.json()["detail"]["code"] == "EMAIL_ALREADY_EXISTS"
+    assert resp.json()["code"] == "EMAIL_ALREADY_EXISTS"
 
 
 def test_register_duplicate_inn_returns_409(client):
@@ -43,14 +43,14 @@ def test_register_duplicate_inn_returns_409(client):
     other = {**VALID_SELLER, "email": "other@example.com"}
     resp = client.post(REGISTER_URL, json=other)
     assert resp.status_code == 409
-    assert resp.json()["detail"]["code"] == "INN_ALREADY_EXISTS"
+    assert resp.json()["code"] == "INN_ALREADY_EXISTS"
 
 
-def test_register_weak_password_returns_422(client):
-    """Пароль без цифры → 422."""
+def test_register_weak_password_returns_400(client):
+    """Пароль без цифры → 400."""
     data = {**VALID_SELLER, "password": "NoDigitsHere"}
     resp = client.post(REGISTER_URL, json=data)
-    assert resp.status_code == 422
+    assert resp.status_code == 400
 
 
 def test_login_returns_tokens(client):
@@ -72,7 +72,7 @@ def test_login_wrong_password_returns_401(client):
         "password": "WrongPass123",
     })
     assert resp.status_code == 401
-    assert resp.json()["detail"]["code"] == "INVALID_CREDENTIALS"
+    assert resp.json()["code"] == "INVALID_CREDENTIALS"
 
 
 def test_login_unknown_email_returns_401(client):
@@ -108,7 +108,7 @@ def test_refresh_reuse_returns_401(client):
     # Второй с тем же токеном — revoked
     resp = client.post(REFRESH_URL, json={"refresh_token": old_refresh})
     assert resp.status_code == 401
-    assert resp.json()["detail"]["code"] == "TOKEN_REVOKED"
+    assert resp.json()["code"] == "TOKEN_REVOKED"
 
 
 def test_logout_revokes_refresh(client):

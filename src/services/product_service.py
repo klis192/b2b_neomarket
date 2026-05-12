@@ -6,7 +6,7 @@ US-B2B-01: создание карточки товара.
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, subqueryload
 
 from src.models.category import Category
 from src.models.product import (
@@ -15,6 +15,7 @@ from src.models.product import (
     ProductImage,
     ProductStatus,
 )
+from src.models.sku import SKU
 from src.schemas.product import ProductCreate, ProductResponse
 
 
@@ -40,8 +41,58 @@ def _product_to_response(product: Product) -> ProductResponse:
             {"name": c.name, "value": c.value}
             for c in product.characteristics
         ],
-        skus=[],  # при создании SKU ещё нет
+        skus=[
+            {
+                "id": str(sku.id),
+                "product_id": str(sku.product_id),
+                "name": sku.name,
+                "price": sku.price,
+                "cost_price": sku.cost_price,
+                "discount": sku.discount,
+                "image": sku.image,
+                "active_quantity": sku.active_quantity,
+                "reserved_quantity": sku.reserved_quantity,
+                "characteristics": [
+                    {"name": c.name, "value": c.value}
+                    for c in sku.characteristics
+                ],
+            }
+            for sku in product.skus
+        ],
     )
+
+
+def get_product_by_id(
+    db: Session,
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID,
+) -> ProductResponse:
+    """
+    Получить товар по ID (для seller-а).
+    Проверяет ownership — чужой товар → 404.
+    """
+    product = (
+        db.query(Product)
+        .options(
+            joinedload(Product.category),
+            joinedload(Product.images),
+            joinedload(Product.characteristics),
+            joinedload(Product.skus).subqueryload(SKU.characteristics),
+        )
+        .filter(
+            Product.id == product_id,
+            Product.seller_id == seller_id,
+        )
+        .first()
+    )
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Product not found"},
+        )
+
+    return _product_to_response(product)
 
 
 def create_product(
