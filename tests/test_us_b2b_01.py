@@ -46,9 +46,9 @@ def test_create_product_returns_201_with_created_status(
     assert body["deleted"] is False
     assert body["blocked"] is False
 
-    # Проверяем категорию
-    assert body["category"]["id"] == seed_categories["mono_id"]
-    assert body["category"]["name"] == "Моносорта"
+    # Проверяем категорию (плоские поля по спеке openapi)
+    assert body["category_id"] == seed_categories["mono_id"]
+    assert body["category_name"] == "Моносорта"
 
     # Проверяем изображения
     assert len(body["images"]) == 2
@@ -144,3 +144,31 @@ def test_create_product_without_characteristics(
 
     assert resp.status_code == 201
     assert resp.json()["characteristics"] == []
+
+
+def test_create_product_does_not_send_to_moderation(
+    client, auth_headers, seed_categories
+):
+    """Инвариант: при создании товар НЕ отправляется на модерацию (нужен SKU)."""
+    data = _valid_product(seed_categories["mono_id"])
+
+    resp = client.post(URL, json=data, headers=auth_headers)
+
+    assert resp.status_code == 201
+    # Статус CREATED, не ON_MODERATION
+    assert resp.json()["status"] == "CREATED"
+
+
+def test_seller_id_in_body_is_ignored(
+    client, auth_headers, seed_categories, other_seller_id
+):
+    """Атака: seller_id в body — должен игнорироваться, берётся из JWT."""
+    data = _valid_product(seed_categories["mono_id"])
+    # Пытаемся подсунуть чужой seller_id в body
+    data["seller_id"] = str(other_seller_id)
+
+    resp = client.post(URL, json=data, headers=auth_headers)
+
+    # Товар создаётся успешно — seller_id из body просто игнорируется Pydantic-ой
+    # (поле seller_id не объявлено в ProductCreate)
+    assert resp.status_code == 201

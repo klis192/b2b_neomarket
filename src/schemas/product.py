@@ -66,9 +66,10 @@ class ProductCreate(BaseModel):
 
 class ProductResponse(BaseModel):
     """
-    Полный ответ с товаром — формат из спеки.
+    Полный ответ с товаром — формат из openapi ProductResponse.
+    category_id — плоский UUID (обязательный по спеке).
+    category_name — расширение (обратно-совместимо).
     blocked вычисляется из status (BLOCKED или HARD_BLOCKED).
-    skus — пустой массив при создании.
     """
     id: str
     title: str
@@ -76,7 +77,8 @@ class ProductResponse(BaseModel):
     status: str
     deleted: bool
     blocked: bool
-    category: CategoryRef
+    category_id: str
+    category_name: str | None = None  # расширение, обратно-совместимо
     images: list[ImageSchema]
     characteristics: list[CharacteristicSchema]
     skus: list = Field(default_factory=list)
