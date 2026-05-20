@@ -56,3 +56,18 @@ def update_product(
     HARD_BLOCKED → 403.
     """
     return product_service.update_product(db, product_id, seller_id, data)
+
+
+
+@router.delete("/{product_id}", status_code=204)
+def delete_product(
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """
+    Мягкое удаление товара (US-B2B-04).
+    deleted=true. Событие DELETED → Moderation, PRODUCT_DELETED → B2C.
+    """
+    product_service.delete_product(db, product_id, seller_id)
+    return None

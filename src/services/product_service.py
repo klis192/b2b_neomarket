@@ -266,3 +266,77 @@ def update_product(
     # Перезагружаем со связями
     loaded = _load_product(db, product_id)
     return _product_to_response(loaded)
+
+
+def delete_product(
+    db: Session,
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID,
+) -> None:
+    """
+    Мягкое удаление товара (B2B-4).
+    deleted = True. Товар не удаляется физически.
+    Побочные эффекты: событие DELETED → Moderation, PRODUCT_DELETED → B2C.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Product not found"},
+        )
+
+    if product.seller_id != seller_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "NOT_OWNER", "message": "Product does not belong to the authenticated seller"},
+        )
+
+    # Уже удалён
+    if product.deleted:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_REQUEST", "message": "Product already deleted"},
+        )
+
+    # HARD_BLOCKED — нельзя удалять
+    if product.status == ProductStatus.HARD_BLOCKED:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FORBIDDEN", "message": "Cannot delete hard-blocked product"},
+        )
+
+    # Soft delete
+    product.deleted = True
+
+    # Собираем sku_ids для события B2C
+    sku_ids = [str(sku.id) for sku in product.skus]
+
+    # Событие DELETED → Moderation
+    db.add(Outbox(
+        idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:DELETED"),
+        event_type="DELETED",
+        payload={
+            "product_id": str(product.id),
+            "seller_id": str(seller_id),
+            "event": "DELETED",
+            "date": datetime.now(timezone.utc).isoformat(),
+        },
+        target_url=f"{settings.moderation_url}/api/v1/events/product",
+    ))
+
+    # Событие PRODUCT_DELETED → B2C
+    db.add(Outbox(
+        idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED"),
+        event_type="PRODUCT_DELETED",
+        payload={
+            "event": "PRODUCT_DELETED",
+            "product_id": str(product.id),
+            "sku_ids": sku_ids,
+            "date": datetime.now(timezone.utc).isoformat(),
+        },
+        target_url=f"{settings.b2c_url}/api/v1/events/product",
+    ))
+
+    db.commit()
+
