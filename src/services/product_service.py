@@ -1,9 +1,11 @@
 """
 Бизнес-логика для товаров.
 US-B2B-01: создание карточки товара.
+US-B2B-05 (базовый): получение товара по ID.
 """
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload, subqueryload
@@ -20,42 +22,68 @@ from src.schemas.product import ProductCreate, ProductResponse
 
 
 def _product_to_response(product: Product) -> ProductResponse:
-    """Конвертирует ORM-объект в ответ API, формат из openapi."""
+    """Конвертирует ORM-объект в ответ API — формат ProductResponse из спеки."""
     return ProductResponse(
         id=str(product.id),
+        seller_id=str(product.seller_id),
+        category_id=str(product.category_id),
         title=product.title,
+        slug=product.slug,
         description=product.description,
         status=product.status.value,
         deleted=product.deleted,
-        blocked=product.status in (ProductStatus.BLOCKED, ProductStatus.HARD_BLOCKED),
-        category_id=str(product.category_id),
-        category_name=product.category.name if product.category else None,
+        blocking_reason_id=str(product.blocking_reason_id) if product.blocking_reason_id else None,
+        moderator_comment=product.moderator_comment,
         images=[
-            {"url": img.url, "ordering": img.ordering}
+            {"id": str(img.id), "url": img.url, "ordering": img.ordering}
             for img in sorted(product.images, key=lambda x: x.ordering)
         ],
         characteristics=[
-            {"name": c.name, "value": c.value}
+            {"id": str(c.id), "name": c.name, "value": c.value}
             for c in product.characteristics
         ],
         skus=[
             {
                 "id": str(sku.id),
-                "product_id": str(sku.product_id),
                 "name": sku.name,
                 "price": sku.price,
-                "cost_price": sku.cost_price,
                 "discount": sku.discount,
-                "image": sku.image,
+                "cost_price": sku.cost_price,
+                "stock_quantity": sku.stock_quantity,
                 "active_quantity": sku.active_quantity,
                 "reserved_quantity": sku.reserved_quantity,
+                "article": sku.article,
+                "images": [
+                    {"id": str(si.id), "url": si.url, "ordering": si.ordering}
+                    for si in sorted(sku.images, key=lambda x: x.ordering)
+                ],
                 "characteristics": [
-                    {"name": c.name, "value": c.value}
+                    {"id": str(c.id), "name": c.name, "value": c.value}
                     for c in sku.characteristics
                 ],
+                "created_at": sku.created_at.isoformat() if sku.created_at else "",
+                "updated_at": sku.updated_at.isoformat() if sku.updated_at else "",
             }
             for sku in product.skus
         ],
+        created_at=product.created_at.isoformat() if product.created_at else "",
+        updated_at=product.updated_at.isoformat() if product.updated_at else "",
+    )
+
+
+def _load_product(db: Session, product_id: uuid.UUID) -> Product | None:
+    """Загружает товар со всеми связями одним запросом."""
+    return (
+        db.query(Product)
+        .options(
+            joinedload(Product.category),
+            joinedload(Product.images),
+            joinedload(Product.characteristics),
+            joinedload(Product.skus).subqueryload(SKU.characteristics),
+            joinedload(Product.skus).subqueryload(SKU.images),
+        )
+        .filter(Product.id == product_id)
+        .first()
     )
 
 
@@ -66,24 +94,11 @@ def get_product_by_id(
 ) -> ProductResponse:
     """
     Получить товар по ID (для seller-а).
-    Проверяет ownership — чужой товар → 404.
+    Чужой товар → 404 (не раскрываем существование).
     """
-    product = (
-        db.query(Product)
-        .options(
-            joinedload(Product.category),
-            joinedload(Product.images),
-            joinedload(Product.characteristics),
-            joinedload(Product.skus).subqueryload(SKU.characteristics),
-        )
-        .filter(
-            Product.id == product_id,
-            Product.seller_id == seller_id,
-        )
-        .first()
-    )
+    product = _load_product(db, product_id)
 
-    if not product:
+    if not product or product.seller_id != seller_id:
         raise HTTPException(
             status_code=404,
             detail={"code": "NOT_FOUND", "message": "Product not found"},
@@ -99,7 +114,7 @@ def create_product(
 ) -> ProductResponse:
     """
     Создание товара (B2B-1).
-    seller_id берётся из JWT — защита от IDOR.
+    seller_id из JWT — защита от IDOR.
     Статус = CREATED, на модерацию не отправляется (нужен хотя бы один SKU).
     """
     # Проверяем что категория существует
@@ -114,49 +129,52 @@ def create_product(
     product = Product(
         seller_id=seller_id,
         title=data.title,
+        slug=data.slug,
         description=data.description,
         category_id=data.category_id,
         status=ProductStatus.CREATED,
     )
     db.add(product)
-    db.flush()  # получаем product.id
+    db.flush()
 
     # Добавляем фото
+    image_objs = []
     for img in data.images:
-        db.add(ProductImage(
-            product_id=product.id,
-            url=img.url,
-            ordering=img.ordering,
-        ))
+        obj = ProductImage(product_id=product.id, url=img.url, ordering=img.ordering)
+        db.add(obj)
+        image_objs.append(obj)
 
     # Добавляем характеристики
+    char_objs = []
     for char in data.characteristics:
-        db.add(ProductCharacteristic(
-            product_id=product.id,
-            name=char.name,
-            value=char.value,
-        ))
+        obj = ProductCharacteristic(product_id=product.id, name=char.name, value=char.value)
+        db.add(obj)
+        char_objs.append(obj)
 
     db.commit()
 
-    # Формируем ответ из данных, которые у нас уже есть
-    # (Не делаем db.refresh — обходим несовместимость SQLite с UUID)
+    # Формируем ответ из данных в памяти (обходим SQLite UUID баг)
+    now = datetime.now(timezone.utc).isoformat()
     return ProductResponse(
         id=str(product.id),
+        seller_id=str(seller_id),
+        category_id=str(data.category_id),
         title=data.title,
+        slug=data.slug,
         description=data.description,
         status=ProductStatus.CREATED.value,
         deleted=False,
-        blocked=False,
-        category_id=str(category.id),
-        category_name=category.name,
+        blocking_reason_id=None,
+        moderator_comment=None,
         images=[
-            {"url": img.url, "ordering": img.ordering}
-            for img in data.images
+            {"id": str(img.id), "url": img.url, "ordering": img.ordering}
+            for img in image_objs
         ],
         characteristics=[
-            {"name": c.name, "value": c.value}
-            for c in data.characteristics
+            {"id": str(c.id), "name": c.name, "value": c.value}
+            for c in char_objs
         ],
         skus=[],
+        created_at=now,
+        updated_at=now,
     )

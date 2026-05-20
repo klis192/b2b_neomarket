@@ -1,7 +1,7 @@
 """
 Бизнес-логика для SKU.
 US-B2B-02: создание SKU.
-Побочный эффект: первый SKU → CREATED → ON_MODERATION + событие в Moderation.
+Побочный эффект: первый SKU → CREATED → ON_MODERATION + событие CREATED в outbox.
 """
 
 import uuid
@@ -11,28 +11,54 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.models.product import Product, ProductStatus
-from src.models.sku import SKU, SKUCharacteristic
+from src.models.sku import SKU, SKUImage, SKUCharacteristic
 from src.models.outbox import Outbox
 from src.config import settings
 from src.schemas.sku import SKUCreate, SKUResponse
 
 
-def _sku_to_response(sku: SKU) -> SKUResponse:
-    """Конвертирует ORM-объект SKU в ответ API."""
+def _sku_to_response(sku: SKU, image_objs=None, char_objs=None) -> SKUResponse:
+    """Конвертирует ORM/данные в ответ API — формат SKUResponse из спеки."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Если объекты переданы — используем их (при создании), иначе из ORM
+    if image_objs is not None:
+        images = [
+            {"id": str(i.id), "url": i.url, "ordering": i.ordering}
+            for i in image_objs
+        ]
+    else:
+        images = [
+            {"id": str(i.id), "url": i.url, "ordering": i.ordering}
+            for i in sorted(sku.images, key=lambda x: x.ordering)
+        ]
+
+    if char_objs is not None:
+        chars = [
+            {"id": str(c.id), "name": c.name, "value": c.value}
+            for c in char_objs
+        ]
+    else:
+        chars = [
+            {"id": str(c.id), "name": c.name, "value": c.value}
+            for c in sku.characteristics
+        ]
+
     return SKUResponse(
         id=str(sku.id),
         product_id=str(sku.product_id),
         name=sku.name,
         price=sku.price,
-        cost_price=sku.cost_price,
         discount=sku.discount,
-        image=sku.image,
+        cost_price=sku.cost_price,
+        stock_quantity=sku.stock_quantity,
         active_quantity=sku.active_quantity,
         reserved_quantity=sku.reserved_quantity,
-        characteristics=[
-            {"name": c.name, "value": c.value}
-            for c in sku.characteristics
-        ],
+        article=sku.article,
+        images=images,
+        characteristics=chars,
+        created_at=sku.created_at.isoformat() if sku.created_at else now,
+        updated_at=sku.updated_at.isoformat() if sku.updated_at else now,
     )
 
 
@@ -66,7 +92,7 @@ def create_sku(
             detail={"code": "FORBIDDEN", "message": "Cannot add SKU to hard-blocked product"},
         )
 
-    # Проверяем, есть ли уже SKU у товара (до добавления нового)
+    # Считаем существующие SKU (до добавления нового)
     existing_sku_count = db.query(SKU).filter(SKU.product_id == product.id).count()
     is_first_sku = existing_sku_count == 0
 
@@ -75,30 +101,36 @@ def create_sku(
         product_id=product.id,
         name=data.name,
         price=data.price,
-        cost_price=data.cost_price,
         discount=data.discount,
-        image=data.image,
-        active_quantity=0,  # увеличивается только через накладные
+        cost_price=data.cost_price,
+        article=data.article,
+        stock_quantity=0,     # увеличивается через накладные
         reserved_quantity=0,
     )
     db.add(sku)
     db.flush()
 
-    # Добавляем характеристики
-    for char in data.characteristics:
-        db.add(SKUCharacteristic(
-            sku_id=sku.id,
-            name=char.name,
-            value=char.value,
-        ))
+    # Добавляем фото SKU
+    image_objs = []
+    for img in data.images:
+        obj = SKUImage(sku_id=sku.id, url=img.url, ordering=img.ordering)
+        db.add(obj)
+        image_objs.append(obj)
 
-    # Побочный эффект: первый SKU для CREATED товара → ON_MODERATION
+    # Добавляем характеристики
+    char_objs = []
+    for char in data.characteristics:
+        obj = SKUCharacteristic(sku_id=sku.id, name=char.name, value=char.value)
+        db.add(obj)
+        char_objs.append(obj)
+
+    # Побочный эффект: первый SKU для CREATED → ON_MODERATION + событие
     if is_first_sku and product.status == ProductStatus.CREATED:
         product.status = ProductStatus.ON_MODERATION
 
-        # Записываем событие в outbox (fire-and-forget на M1)
-        event = Outbox(
-            idempotency_key=uuid.uuid4(),
+        # Событие CREATED в outbox для Moderation
+        db.add(Outbox(
+            idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:CREATED"),
             event_type="CREATED",
             payload={
                 "product_id": str(product.id),
@@ -107,24 +139,8 @@ def create_sku(
                 "date": datetime.now(timezone.utc).isoformat(),
             },
             target_url=f"{settings.moderation_url}/api/v1/events/product",
-        )
-        db.add(event)
+        ))
 
     db.commit()
 
-    # Формируем ответ из данных в памяти
-    return SKUResponse(
-        id=str(sku.id),
-        product_id=str(data.product_id),
-        name=data.name,
-        price=data.price,
-        cost_price=data.cost_price,
-        discount=data.discount,
-        image=data.image,
-        active_quantity=0,
-        reserved_quantity=0,
-        characteristics=[
-            {"name": c.name, "value": c.value}
-            for c in data.characteristics
-        ],
-    )
+    return _sku_to_response(sku, image_objs=image_objs, char_objs=char_objs)
