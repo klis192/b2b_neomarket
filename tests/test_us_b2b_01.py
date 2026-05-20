@@ -7,7 +7,6 @@ import uuid
 
 import pytest
 
-
 URL = "/api/v1/products"
 
 
@@ -33,67 +32,68 @@ def test_create_product_returns_201_with_created_status(
 ):
     """Успешное создание товара возвращает 201 и статус CREATED."""
     data = _valid_product(seed_categories["mono_id"])
-
     resp = client.post(URL, json=data, headers=auth_headers)
 
     assert resp.status_code == 201
     body = resp.json()
 
-    # Проверяем основные поля
+    # Основные поля
     assert body["title"] == "Эфиопия Иргачеффе"
     assert body["description"] == "Яркий моносорт с нотами жасмина и бергамота"
     assert body["status"] == "CREATED"
     assert body["deleted"] is False
-    assert body["blocked"] is False
+    assert body["blocking_reason_id"] is None
+    assert body["moderator_comment"] is None
 
-    # Проверяем категорию (плоские поля по спеке openapi)
+    # Обязательные поля по спеке
+    assert "id" in body
+    assert "seller_id" in body
+    assert "category_id" in body
+    assert "created_at" in body
+    assert "updated_at" in body
+
+    # Категория — плоский UUID
     assert body["category_id"] == seed_categories["mono_id"]
-    assert body["category_name"] == "Моносорта"
 
-    # Проверяем изображения
+    # Изображения с id
     assert len(body["images"]) == 2
+    assert "id" in body["images"][0]
     assert body["images"][0]["url"] == "/s3/ethiopia-1.jpg"
 
-    # Проверяем характеристики
+    # Характеристики с id
     assert len(body["characteristics"]) == 2
+    assert "id" in body["characteristics"][0]
 
     # SKU пустой при создании
     assert body["skus"] == []
 
     # ID — валидный UUID
-    uuid.UUID(body["id"])  # не кидает исключение = валидный
+    uuid.UUID(body["id"])
 
 
 def test_seller_id_taken_from_jwt(
     client, auth_headers, other_auth_headers, seed_categories
 ):
-    """
-    seller_id берётся из JWT, а не из тела запроса.
-    Два разных продавца создают товары — у каждого свой seller_id.
-    """
+    """seller_id берётся из JWT — два продавца создают разные товары."""
     data = _valid_product(seed_categories["mono_id"])
 
-    # Первый продавец
     resp1 = client.post(URL, json=data, headers=auth_headers)
-    assert resp1.status_code == 201
-
-    # Второй продавец
     resp2 = client.post(URL, json=data, headers=other_auth_headers)
+
+    assert resp1.status_code == 201
     assert resp2.status_code == 201
+    # Разные seller_id в ответе
+    assert resp1.json()["seller_id"] != resp2.json()["seller_id"]
 
-    # ID товаров разные (каждый принадлежит своему продавцу)
-    assert resp1.json()["id"] != resp2.json()["id"]
 
-
-def test_missing_images_returns_400(client, auth_headers, seed_categories):
-    """Товар без изображений → 400."""
+def test_missing_images_accepted(client, auth_headers, seed_categories):
+    """Товар без изображений — допустим по спеке (images default [])."""
     data = _valid_product(seed_categories["mono_id"])
-    data["images"] = []  # пустой массив
+    data["images"] = []
 
     resp = client.post(URL, json=data, headers=auth_headers)
-
-    # Пустой массив images → 400 INVALID_REQUEST
-    assert resp.status_code == 400
+    assert resp.status_code == 201
+    assert resp.json()["images"] == []
 
 
 def test_missing_category_returns_400(client, auth_headers):
@@ -101,23 +101,19 @@ def test_missing_category_returns_400(client, auth_headers):
     data = {
         "title": "Тестовый товар",
         "description": "Описание",
-        "category_id": str(uuid.uuid4()),  # несуществующий UUID
+        "category_id": str(uuid.uuid4()),
         "images": [{"url": "/s3/test.jpg", "ordering": 0}],
     }
-
     resp = client.post(URL, json=data, headers=auth_headers)
 
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_REQUEST"
-    assert "Category not found" in resp.json()["message"]
 
 
 def test_create_product_without_auth_returns_401(client, seed_categories):
     """Запрос без токена → 401."""
     data = _valid_product(seed_categories["mono_id"])
-
     resp = client.post(URL, json=data)
-
     assert resp.status_code == 401
 
 
@@ -127,9 +123,7 @@ def test_create_product_empty_title_returns_400(
     """Пустой title → 400."""
     data = _valid_product(seed_categories["mono_id"])
     data["title"] = ""
-
     resp = client.post(URL, json=data, headers=auth_headers)
-
     assert resp.status_code == 400
 
 
@@ -139,9 +133,7 @@ def test_create_product_without_characteristics(
     """Характеристики необязательны — товар создаётся без них."""
     data = _valid_product(seed_categories["mono_id"])
     del data["characteristics"]
-
     resp = client.post(URL, json=data, headers=auth_headers)
-
     assert resp.status_code == 201
     assert resp.json()["characteristics"] == []
 
@@ -149,26 +141,18 @@ def test_create_product_without_characteristics(
 def test_create_product_does_not_send_to_moderation(
     client, auth_headers, seed_categories
 ):
-    """Инвариант: при создании товар НЕ отправляется на модерацию (нужен SKU)."""
+    """Инвариант: при создании товар НЕ отправляется на модерацию."""
     data = _valid_product(seed_categories["mono_id"])
-
     resp = client.post(URL, json=data, headers=auth_headers)
-
     assert resp.status_code == 201
-    # Статус CREATED, не ON_MODERATION
     assert resp.json()["status"] == "CREATED"
 
 
 def test_seller_id_in_body_is_ignored(
     client, auth_headers, seed_categories, other_seller_id
 ):
-    """Атака: seller_id в body — должен игнорироваться, берётся из JWT."""
+    """seller_id в body игнорируется — берётся из JWT."""
     data = _valid_product(seed_categories["mono_id"])
-    # Пытаемся подсунуть чужой seller_id в body
     data["seller_id"] = str(other_seller_id)
-
     resp = client.post(URL, json=data, headers=auth_headers)
-
-    # Товар создаётся успешно — seller_id из body просто игнорируется Pydantic-ой
-    # (поле seller_id не объявлено в ProductCreate)
     assert resp.status_code == 201

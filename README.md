@@ -32,7 +32,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -v
 ```
 
-Тесты используют SQLite in-memory - Docker не требуется.
+Тесты используют SQLite in-memory — Docker не требуется.
 
 ## Структура
 
