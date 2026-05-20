@@ -76,3 +76,19 @@ class SKUResponse(BaseModel):
     characteristics: list[SKUCharacteristicResponse]
     created_at: str
     updated_at: str
+
+
+# --- Запрос на обновление (PATCH — все поля опциональны) ---
+
+class SKUUpdate(BaseModel):
+    """
+    PATCH /api/v1/skus/{id} — редактирование SKU.
+    Семантика PATCH — обновляются только переданные поля.
+    active_quantity/reserved_quantity нельзя менять напрямую.
+    """
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    price: int | None = Field(default=None, ge=0)
+    discount: int | None = Field(default=None, ge=0)
+    cost_price: int | None = None
+    article: str | None = None
+    characteristics: list[SKUCharacteristicCreate] | None = None

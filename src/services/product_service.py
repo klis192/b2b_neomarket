@@ -18,6 +18,8 @@ from src.models.product import (
     ProductStatus,
 )
 from src.models.sku import SKU
+from src.models.outbox import Outbox
+from src.config import settings
 from src.schemas.product import ProductCreate, ProductResponse
 
 
@@ -178,3 +180,89 @@ def create_product(
         created_at=now,
         updated_at=now,
     )
+
+
+def update_product(
+    db: Session,
+    product_id: uuid.UUID,
+    seller_id: uuid.UUID,
+    data: "ProductUpdate",
+) -> ProductResponse:
+    """
+    Редактирование товара (B2B-3, PATCH).
+    HARD_BLOCKED → 403. Чужой товар → 403 NOT_OWNER.
+    Побочный эффект: MODERATED/BLOCKED → ON_MODERATION + событие EDITED.
+    """
+    from src.schemas.product import ProductUpdate
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+
+    # Не найден
+    if not product or product.deleted:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Product not found"},
+        )
+
+    # Чужой товар — 403 (продавец знает что товар существует, он его создал)
+    if product.seller_id != seller_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "NOT_OWNER", "message": "Product does not belong to the authenticated seller"},
+        )
+
+    # HARD_BLOCKED — нельзя редактировать
+    if product.status == ProductStatus.HARD_BLOCKED:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FORBIDDEN", "message": "Cannot edit hard-blocked product"},
+        )
+
+    # Обновляем только переданные поля (семантика PATCH)
+    if data.title is not None:
+        product.title = data.title
+    if data.description is not None:
+        product.description = data.description
+    if data.category_id is not None:
+        category = db.query(Category).filter(Category.id == data.category_id).first()
+        if not category:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "INVALID_REQUEST", "message": "Category not found"},
+            )
+        product.category_id = data.category_id
+
+    # Характеристики — если переданы, полностью заменяются
+    if data.characteristics is not None:
+        for char in product.characteristics:
+            db.delete(char)
+        db.flush()
+        for char in data.characteristics:
+            db.add(ProductCharacteristic(
+                product_id=product.id, name=char.name, value=char.value
+            ))
+
+    # Побочный эффект: MODERATED/BLOCKED → ON_MODERATION + событие EDITED
+    if product.status in (ProductStatus.MODERATED, ProductStatus.BLOCKED):
+        product.status = ProductStatus.ON_MODERATION
+        # Очищаем данные блокировки (товар исправлен)
+        product.blocking_reason_id = None
+        product.moderator_comment = None
+
+        db.add(Outbox(
+            idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:EDITED:{datetime.now(timezone.utc).isoformat()}"),
+            event_type="EDITED",
+            payload={
+                "product_id": str(product.id),
+                "seller_id": str(seller_id),
+                "event": "EDITED",
+                "date": datetime.now(timezone.utc).isoformat(),
+            },
+            target_url=f"{settings.moderation_url}/api/v1/events/product",
+        ))
+
+    db.commit()
+
+    # Перезагружаем со связями
+    loaded = _load_product(db, product_id)
+    return _product_to_response(loaded)
