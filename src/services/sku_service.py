@@ -144,3 +144,92 @@ def create_sku(
     db.commit()
 
     return _sku_to_response(sku, image_objs=image_objs, char_objs=char_objs)
+
+
+def update_sku(
+    db: Session,
+    sku_id: uuid.UUID,
+    seller_id: uuid.UUID,
+    data: "SKUUpdate",
+) -> SKUResponse:
+    """
+    Редактирование SKU (B2B-3, PATCH).
+    Ownership через parent product. HARD_BLOCKED → 403.
+    Побочный эффект: MODERATED/BLOCKED → ON_MODERATION + событие EDITED.
+    Резервы не затрагиваются.
+    """
+    from src.schemas.sku import SKUUpdate
+
+    sku = db.query(SKU).filter(SKU.id == sku_id).first()
+
+    if not sku:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "SKU not found"},
+        )
+
+    # Ownership через parent product
+    product = db.query(Product).filter(Product.id == sku.product_id).first()
+    if not product or product.deleted:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "SKU not found"},
+        )
+
+    if product.seller_id != seller_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "NOT_OWNER", "message": "Product does not belong to the authenticated seller"},
+        )
+
+    if product.status == ProductStatus.HARD_BLOCKED:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FORBIDDEN", "message": "Cannot edit hard-blocked product"},
+        )
+
+    # Обновляем только переданные поля
+    if data.name is not None:
+        sku.name = data.name
+    if data.price is not None:
+        sku.price = data.price
+    if data.discount is not None:
+        sku.discount = data.discount
+    if data.cost_price is not None:
+        sku.cost_price = data.cost_price
+    if data.article is not None:
+        sku.article = data.article
+
+    # Характеристики — если переданы, полностью заменяются
+    if data.characteristics is not None:
+        for char in sku.characteristics:
+            db.delete(char)
+        db.flush()
+        for char in data.characteristics:
+            db.add(SKUCharacteristic(
+                sku_id=sku.id, name=char.name, value=char.value
+            ))
+
+    # Побочный эффект: MODERATED/BLOCKED → ON_MODERATION + событие EDITED
+    if product.status in (ProductStatus.MODERATED, ProductStatus.BLOCKED):
+        product.status = ProductStatus.ON_MODERATION
+        product.blocking_reason_id = None
+        product.moderator_comment = None
+
+        db.add(Outbox(
+            idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:EDITED:{datetime.now(timezone.utc).isoformat()}"),
+            event_type="EDITED",
+            payload={
+                "product_id": str(product.id),
+                "seller_id": str(seller_id),
+                "event": "EDITED",
+                "date": datetime.now(timezone.utc).isoformat(),
+            },
+            target_url=f"{settings.moderation_url}/api/v1/events/product",
+        ))
+
+    db.commit()
+
+    # Перезагружаем SKU со связями
+    sku = db.query(SKU).filter(SKU.id == sku_id).first()
+    return _sku_to_response(sku)

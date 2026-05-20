@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from src.auth.dependencies import get_current_seller
 from src.database import get_db
-from src.schemas.sku import SKUCreate, SKUResponse
+from src.schemas.sku import SKUCreate, SKUResponse, SKUUpdate
 from src.services import sku_service
 
 router = APIRouter(prefix="/api/v1/skus", tags=["SKU"])
@@ -27,3 +27,18 @@ def create_sku(
     Побочный эффект: первый SKU → товар переходит в ON_MODERATION.
     """
     return sku_service.create_sku(db, seller_id, data)
+
+
+@router.patch("/{sku_id}", response_model=SKUResponse)
+def update_sku(
+    sku_id: uuid.UUID,
+    data: SKUUpdate,
+    seller_id: uuid.UUID = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """
+    Редактирование SKU (US-B2B-03, PATCH).
+    Ownership через parent product.
+    MODERATED/BLOCKED → ON_MODERATION + событие EDITED.
+    """
+    return sku_service.update_sku(db, sku_id, seller_id, data)

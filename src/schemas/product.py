@@ -97,3 +97,17 @@ class ProductResponse(BaseModel):
     skus: list[SKUShortResponse]
     created_at: str
     updated_at: str
+
+
+# --- Запрос на обновление (PATCH — все поля опциональны) ---
+
+class ProductUpdate(BaseModel):
+    """
+    PATCH /api/v1/products/{id} — редактирование товара.
+    Семантика PATCH — обновляются только переданные поля.
+    Если characteristics переданы — заменяются полностью.
+    """
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=5000)
+    category_id: uuid.UUID | None = None
+    characteristics: list[CharacteristicCreate] | None = None
