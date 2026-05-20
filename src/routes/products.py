@@ -58,6 +58,7 @@ def update_product(
     return product_service.update_product(db, product_id, seller_id, data)
 
 
+
 @router.delete("/{product_id}", status_code=204)
 def delete_product(
     product_id: uuid.UUID,
