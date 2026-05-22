@@ -83,11 +83,12 @@ def test_first_sku_transitions_product_to_on_moderation(
     assert product_resp.status_code == 200
     assert product_resp.json()["status"] == "ON_MODERATION"
 
-    # Проверяем запись в outbox (событие CREATED для Moderation)
+    # Проверяем запись в outbox (событие CREATED для Moderation, обёртка)
     from src.models.outbox import Outbox
     outbox_event = db.query(Outbox).filter(Outbox.event_type == "CREATED").first()
     assert outbox_event is not None
-    assert str(outbox_event.payload["product_id"]) == product["id"]
+    assert outbox_event.payload["event_type"] == "CREATED"
+    assert outbox_event.payload["payload"]["product_id"] == product["id"]
 
 
 def test_second_sku_no_state_change(

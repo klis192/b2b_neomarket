@@ -70,10 +70,11 @@ def test_edit_moderated_product_returns_to_on_moderation(
     assert body["title"] == "Эфиопия Иргачеффе (обновлено)"
     assert body["status"] == "ON_MODERATION"
 
-    # Проверяем событие EDITED в outbox
+    # Проверяем событие EDITED в outbox (обёртка с вложенным payload)
     outbox_event = db.query(Outbox).filter(Outbox.event_type == "EDITED").first()
     assert outbox_event is not None
-    assert str(outbox_event.payload["product_id"]) == product["id"]
+    assert outbox_event.payload["event_type"] == "EDITED"
+    assert outbox_event.payload["payload"]["product_id"] == product["id"]
 
 
 def test_edit_blocked_product_returns_to_on_moderation(

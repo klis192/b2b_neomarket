@@ -9,7 +9,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
@@ -46,6 +46,10 @@ class Product(Base):
     # Информация о блокировке (заполняется модерацией, US-B2B-09)
     blocking_reason_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     moderator_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Полный объект причины блокировки {id, title, comment} — для отображения продавцу
+    blocking_reason: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Замечания по конкретным полям [{field_name, sku_id, comment}] — для исправления
+    field_reports: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # Метаданные
     created_at: Mapped[datetime] = mapped_column(

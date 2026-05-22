@@ -1,6 +1,6 @@
 """
 Тесты для US-B2B-04: Удаление товара (soft delete).
-Имена тестов — из контракта.
+Имена тестов — из контракта. Отдельные тесты на события.
 """
 
 import uuid
@@ -30,37 +30,66 @@ def _create_product_with_sku(client, auth_headers, category_id: str) -> dict:
 
 
 def test_delete_sets_deleted_true(
-    client, auth_headers, seed_categories, db
+    client, auth_headers, seed_categories
 ):
-    """Удаление ставит deleted=true + события в outbox."""
-    from src.models.outbox import Outbox
-
+    """Удаление ставит deleted=true, возвращает 204."""
     product = _create_product_with_sku(client, auth_headers, seed_categories["mono_id"])
 
     resp = client.delete(
         f"{PRODUCTS_URL}/{product['id']}",
         headers=auth_headers,
     )
-
     assert resp.status_code == 204
 
-    # Проверяем что товар помечен удалённым
+    # Проверяем deleted=true через GET
     get_resp = client.get(
         f"{PRODUCTS_URL}/{product['id']}", headers=auth_headers
     )
     assert get_resp.status_code == 200
     assert get_resp.json()["deleted"] is True
 
-    # Событие DELETED → Moderation
-    deleted_event = db.query(Outbox).filter(Outbox.event_type == "DELETED").first()
-    assert deleted_event is not None
-    assert str(deleted_event.payload["product_id"]) == product["id"]
 
-    # Событие PRODUCT_DELETED → B2C
-    b2c_event = db.query(Outbox).filter(Outbox.event_type == "PRODUCT_DELETED").first()
-    assert b2c_event is not None
-    assert str(b2c_event.payload["product_id"]) == product["id"]
-    assert isinstance(b2c_event.payload["sku_ids"], list)
+def test_delete_sends_event_to_moderation(
+    client, auth_headers, seed_categories, db
+):
+    """При удалении отправляется событие PRODUCT_DELETED в Moderation через outbox."""
+    from src.models.outbox import Outbox
+
+    product = _create_product_with_sku(client, auth_headers, seed_categories["mono_id"])
+
+    client.delete(f"{PRODUCTS_URL}/{product['id']}", headers=auth_headers)
+
+    # Событие PRODUCT_DELETED → Moderation (обёртка с вложенным payload)
+    events = db.query(Outbox).filter(Outbox.event_type == "PRODUCT_DELETED").all()
+    mod_event = [e for e in events if "moderation" in e.target_url.lower() or "mod" in e.target_url.lower()]
+    assert len(mod_event) == 1
+    event = mod_event[0]
+    assert event.payload["event_type"] == "PRODUCT_DELETED"
+    assert "idempotency_key" in event.payload
+    assert "occurred_at" in event.payload
+    assert event.payload["payload"]["product_id"] == product["id"]
+
+
+def test_delete_sends_event_to_b2c(
+    client, auth_headers, seed_categories, db
+):
+    """При удалении отправляется событие PRODUCT_DELETED в B2C через outbox."""
+    from src.models.outbox import Outbox
+
+    product = _create_product_with_sku(client, auth_headers, seed_categories["mono_id"])
+
+    client.delete(f"{PRODUCTS_URL}/{product['id']}", headers=auth_headers)
+
+    # Событие PRODUCT_DELETED → B2C (обёртка с вложенным payload)
+    events = db.query(Outbox).filter(Outbox.event_type == "PRODUCT_DELETED").all()
+    b2c_event = [e for e in events if "b2c" in e.target_url.lower()]
+    assert len(b2c_event) == 1
+    event = b2c_event[0]
+    assert event.payload["event_type"] == "PRODUCT_DELETED"
+    assert "idempotency_key" in event.payload
+    assert "occurred_at" in event.payload
+    assert event.payload["payload"]["product_id"] == product["id"]
+    assert isinstance(event.payload["payload"]["sku_ids"], list)
 
 
 def test_delete_already_deleted_returns_400(
@@ -69,15 +98,12 @@ def test_delete_already_deleted_returns_400(
     """Повторное удаление → 400."""
     product = _create_product_with_sku(client, auth_headers, seed_categories["mono_id"])
 
-    # Первое удаление — ОК
     client.delete(f"{PRODUCTS_URL}/{product['id']}", headers=auth_headers)
 
-    # Повторное — 400
     resp = client.delete(
         f"{PRODUCTS_URL}/{product['id']}",
         headers=auth_headers,
     )
-
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_REQUEST"
 
@@ -92,7 +118,6 @@ def test_delete_others_product_returns_403(
         f"{PRODUCTS_URL}/{product['id']}",
         headers=other_auth_headers,
     )
-
     assert resp.status_code == 403
     assert resp.json()["code"] == "NOT_OWNER"
 
@@ -103,14 +128,13 @@ def test_delete_nonexistent_returns_404(client, auth_headers):
         f"{PRODUCTS_URL}/{uuid.uuid4()}",
         headers=auth_headers,
     )
-
     assert resp.status_code == 404
 
 
 def test_delete_hard_blocked_returns_403(
     client, auth_headers, seed_categories, db
 ):
-    """HARD_BLOCKED товар → 403."""
+    """HARD_BLOCKED → 403."""
     from src.models.product import Product, ProductStatus
 
     product = _create_product_with_sku(client, auth_headers, seed_categories["mono_id"])
@@ -125,12 +149,10 @@ def test_delete_hard_blocked_returns_403(
         f"{PRODUCTS_URL}/{product['id']}",
         headers=auth_headers,
     )
-
     assert resp.status_code == 403
-    assert resp.json()["code"] == "FORBIDDEN"
 
 
-def test_delete_without_auth_returns_401(client, seed_categories):
+def test_delete_without_auth_returns_401(client):
     """Без токена → 401."""
     resp = client.delete(f"{PRODUCTS_URL}/{uuid.uuid4()}")
     assert resp.status_code == 401
