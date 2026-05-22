@@ -69,7 +69,7 @@ class ProductCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=5000)
     category_id: uuid.UUID
     slug: str | None = None
-    images: list[ProductImageCreate] = Field(default_factory=list)
+    images: list[ProductImageCreate] = Field(..., min_length=1)
     characteristics: list[CharacteristicCreate] = Field(default_factory=list)
 
 
@@ -77,10 +77,11 @@ class ProductCreate(BaseModel):
 
 class ProductResponse(BaseModel):
     """
-    Полный seller-view ответ — ProductResponse из спеки.
-    Все обязательные поля: id, seller_id, category_id, title, slug,
+    Полный seller-view ответ — ProductResponse из спеки + канон-поля.
+    Обязательные по openapi: id, seller_id, category_id, title, slug,
     description, status, deleted, blocking_reason_id, moderator_comment,
     images, characteristics, skus, created_at, updated_at.
+    Канон-расширения: blocked, blocking_reason, field_reports.
     """
     id: str
     seller_id: str
@@ -90,8 +91,13 @@ class ProductResponse(BaseModel):
     description: str
     status: str
     deleted: bool
+    blocked: bool  # вычисляется из status (BLOCKED или HARD_BLOCKED)
     blocking_reason_id: str | None
     moderator_comment: str | None
+    # Полный объект причины блокировки {id, title, comment} — канон B2B-5
+    blocking_reason: dict | None = None
+    # Замечания по полям [{field_name, sku_id, comment}] — канон B2B-5
+    field_reports: list = Field(default_factory=list)
     images: list[ProductImageResponse]
     characteristics: list[CharacteristicResponse]
     skus: list[SKUShortResponse]

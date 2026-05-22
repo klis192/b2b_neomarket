@@ -24,7 +24,7 @@ from src.schemas.product import ProductCreate, ProductResponse
 
 
 def _product_to_response(product: Product) -> ProductResponse:
-    """Конвертирует ORM-объект в ответ API — формат ProductResponse из спеки."""
+    """Конвертирует ORM-объект в ответ API — формат ProductResponse из спеки + канон."""
     return ProductResponse(
         id=str(product.id),
         seller_id=str(product.seller_id),
@@ -34,8 +34,14 @@ def _product_to_response(product: Product) -> ProductResponse:
         description=product.description,
         status=product.status.value,
         deleted=product.deleted,
+        # blocked — простой флаг для UI (канон B2B-5)
+        blocked=product.status in (ProductStatus.BLOCKED, ProductStatus.HARD_BLOCKED),
         blocking_reason_id=str(product.blocking_reason_id) if product.blocking_reason_id else None,
         moderator_comment=product.moderator_comment,
+        # Полный объект причины блокировки {id, title, comment} — канон B2B-5
+        blocking_reason=product.blocking_reason,
+        # Замечания по полям [{field_name, sku_id, comment}] — канон B2B-5
+        field_reports=product.field_reports or [],
         images=[
             {"id": str(img.id), "url": img.url, "ordering": img.ordering}
             for img in sorted(product.images, key=lambda x: x.ordering)
@@ -166,8 +172,11 @@ def create_product(
         description=data.description,
         status=ProductStatus.CREATED.value,
         deleted=False,
+        blocked=False,
         blocking_reason_id=None,
         moderator_comment=None,
+        blocking_reason=None,
+        field_reports=[],
         images=[
             {"id": str(img.id), "url": img.url, "ordering": img.ordering}
             for img in image_objs
@@ -244,19 +253,27 @@ def update_product(
 
     # Побочный эффект: MODERATED/BLOCKED → ON_MODERATION + событие EDITED
     if product.status in (ProductStatus.MODERATED, ProductStatus.BLOCKED):
+        # Запоминаем updated_at ДО изменения — для стабильного idempotency_key при retry
+        version_ts = product.updated_at.isoformat() if product.updated_at else "init"
         product.status = ProductStatus.ON_MODERATION
         # Очищаем данные блокировки (товар исправлен)
         product.blocking_reason_id = None
         product.moderator_comment = None
+        product.blocking_reason = None
+        product.field_reports = None
 
+        idem_key = uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:EDITED:{version_ts}")
         db.add(Outbox(
-            idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:EDITED:{datetime.now(timezone.utc).isoformat()}"),
+            idempotency_key=idem_key,
             event_type="EDITED",
             payload={
-                "product_id": str(product.id),
-                "seller_id": str(seller_id),
-                "event": "EDITED",
-                "date": datetime.now(timezone.utc).isoformat(),
+                "event_type": "EDITED",
+                "idempotency_key": str(idem_key),
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+                "payload": {
+                    "product_id": str(product.id),
+                    "seller_id": str(seller_id),
+                },
             },
             target_url=f"{settings.moderation_url}/api/v1/events/product",
         ))
@@ -311,32 +328,57 @@ def delete_product(
 
     # Собираем sku_ids для события B2C
     sku_ids = [str(sku.id) for sku in product.skus]
+    now = datetime.now(timezone.utc).isoformat()
 
-    # Событие DELETED → Moderation
+    # Событие PRODUCT_DELETED → Moderation (обёртка с вложенным payload)
     db.add(Outbox(
-        idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:DELETED"),
-        event_type="DELETED",
+        idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED:MOD"),
+        event_type="PRODUCT_DELETED",
         payload={
-            "product_id": str(product.id),
-            "seller_id": str(seller_id),
-            "event": "DELETED",
-            "date": datetime.now(timezone.utc).isoformat(),
+            "event_type": "PRODUCT_DELETED",
+            "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED:MOD")),
+            "occurred_at": now,
+            "payload": {
+                "product_id": str(product.id),
+                "seller_id": str(seller_id),
+            },
         },
         target_url=f"{settings.moderation_url}/api/v1/events/product",
     ))
 
-    # Событие PRODUCT_DELETED → B2C
+    # Событие PRODUCT_DELETED → B2C (обёртка с вложенным payload)
     db.add(Outbox(
-        idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED"),
+        idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED:B2C"),
         event_type="PRODUCT_DELETED",
         payload={
-            "event": "PRODUCT_DELETED",
-            "product_id": str(product.id),
-            "sku_ids": sku_ids,
-            "date": datetime.now(timezone.utc).isoformat(),
+            "event_type": "PRODUCT_DELETED",
+            "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED:B2C")),
+            "occurred_at": now,
+            "payload": {
+                "product_id": str(product.id),
+                "sku_ids": sku_ids,
+            },
         },
         target_url=f"{settings.b2c_url}/api/v1/events/product",
     ))
 
     db.commit()
 
+
+def get_product_by_id_service(
+    db: Session,
+    product_id: uuid.UUID,
+) -> ProductResponse:
+    """
+    Получить товар по ID (service mode — Moderation/B2C через X-Service-Key).
+    Ownership НЕ проверяется — Moderation видит товары всех продавцов.
+    """
+    product = _load_product(db, product_id)
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Product not found"},
+        )
+
+    return _product_to_response(product)

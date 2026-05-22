@@ -86,14 +86,13 @@ def test_seller_id_taken_from_jwt(
     assert resp1.json()["seller_id"] != resp2.json()["seller_id"]
 
 
-def test_missing_images_accepted(client, auth_headers, seed_categories):
-    """Товар без изображений — допустим по спеке (images default [])."""
+def test_missing_images_returns_400(client, auth_headers, seed_categories):
+    """Товар без изображений → 400 (минимум 1 фото по канону)."""
     data = _valid_product(seed_categories["mono_id"])
     data["images"] = []
 
     resp = client.post(URL, json=data, headers=auth_headers)
-    assert resp.status_code == 201
-    assert resp.json()["images"] == []
+    assert resp.status_code == 400
 
 
 def test_missing_category_returns_400(client, auth_headers):
