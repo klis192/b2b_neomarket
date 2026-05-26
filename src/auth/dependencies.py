@@ -49,11 +49,17 @@ def get_current_seller(authorization: str | None = Header(default=None)) -> uuid
     return uuid.UUID(claims["sub"])
 
 
-def require_service_key(x_service_key: str = Header(...)) -> str:
+def require_service_key(x_service_key: str | None = Header(default=None)) -> str:
     """
     Проверяет X-Service-Key для межсервисных вызовов.
     Принимает ключи от Moderation и B2C.
     """
+    if not x_service_key:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "UNAUTHORIZED", "message": "Требуется X-Service-Key"},
+        )
+
     valid_keys = {
         settings.mod_to_b2b_key: "moderation",
         settings.b2c_to_b2b_key: "b2c",
