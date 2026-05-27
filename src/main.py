@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import settings
 from src.database import Base, SessionLocal, engine
 from src.exceptions import register_exception_handlers
-from src.routes import auth, categories, products, skus, invoices, catalog
+from src.routes import auth, categories, products, skus, invoices, catalog, reserve
 from src.seed import seed_database
 
 # Импортируем модели, чтобы Base.metadata знал все таблицы
@@ -56,6 +56,7 @@ app.include_router(products.router)  # Этап 1: US-B2B-01
 app.include_router(skus.router)      # Этап 2: US-B2B-02
 app.include_router(invoices.router)  # Этап 6: US-B2B-06
 app.include_router(catalog.router)   # Этап 7: US-B2B-07
+app.include_router(reserve.router)   # Этап 8: US-B2B-08
 
 # Роутеры для следующих этапов:
 # app.include_router(skus.router)        # Этап 2
