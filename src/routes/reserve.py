@@ -1,8 +1,10 @@
 """
-Эндпоинты резервирования.
+Эндпоинты резервирования и списания.
 US-B2B-08:
   POST /api/v1/inventory/reserve   — all-or-nothing резервирование
   POST /api/v1/inventory/unreserve — снятие резерва при отмене заказа
+US-B2B-10:
+  POST /api/v1/inventory/fulfill   — списание при доставке
 """
 
 from fastapi import APIRouter, Depends
@@ -45,3 +47,17 @@ def unreserve(
     X-Service-Key обязателен.
     """
     return reserve_service.unreserve_skus(db, data)
+
+
+@router.post("/fulfill", response_model=InventoryOrderResponse)
+def fulfill(
+    data: InventoryOrderRequest,
+    service: str = Depends(require_service_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Списание при доставке (US-B2B-10).
+    reserved_quantity -= N, stock_quantity -= N.
+    Идемпотентно по order_id. X-Service-Key обязателен.
+    """
+    return reserve_service.fulfill_order(db, data)
