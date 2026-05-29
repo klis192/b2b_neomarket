@@ -211,3 +211,73 @@ def unreserve_skus(
         status="UNRESERVED",
         processed_at=now.isoformat(),
     )
+
+
+def fulfill_order(
+    db: Session,
+    data: InventoryOrderRequest,
+) -> InventoryOrderResponse:
+    """
+    Списание резерва при доставке (B2B-10).
+    reserved_quantity -= N, stock_quantity -= N (товар покинул склад).
+    active_quantity не меняется (stock и reserved уменьшаются одинаково).
+    Идемпотентность по order_id через FulfillOperation.
+    SELECT FOR UPDATE на Postgres.
+    """
+    from src.models.outbox import FulfillOperation
+
+    now = datetime.now(timezone.utc)
+
+    # Идемпотентность — если order_id уже обработан, возвращаем кэш
+    existing = db.query(FulfillOperation).filter(
+        FulfillOperation.order_id == data.order_id
+    ).first()
+    if existing:
+        return InventoryOrderResponse(**existing.result)
+
+    requested = {item.sku_id: item.quantity for item in data.items}
+    sku_ids = list(requested.keys())
+
+    # SELECT FOR UPDATE для Postgres
+    query = db.query(SKU).filter(SKU.id.in_(sku_ids))
+    if _is_postgres(db):
+        query = query.with_for_update()
+    skus = query.all()
+
+    # Проверяем что все SKU найдены
+    found_ids = {sku.id for sku in skus}
+    missing = set(sku_ids) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "SKU not found"},
+        )
+
+    # Списываем: reserved -= N, stock -= N
+    for sku in skus:
+        qty = requested[sku.id]
+        if sku.reserved_quantity < qty:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CONFLICT",
+                    "message": f"Cannot fulfill {qty} from SKU {sku.id}: only {sku.reserved_quantity} reserved",
+                },
+            )
+        sku.reserved_quantity -= qty
+        sku.stock_quantity -= qty
+
+    # Сохраняем результат для идемпотентности
+    result = {
+        "order_id": str(data.order_id),
+        "status": "FULFILLED",
+        "processed_at": now.isoformat(),
+    }
+    db.add(FulfillOperation(
+        order_id=data.order_id,
+        result=result,
+    ))
+
+    db.commit()
+
+    return InventoryOrderResponse(**result)
