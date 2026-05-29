@@ -1,21 +1,42 @@
 """
 Эндпоинты для накладных.
 US-B2B-06:
-  POST /api/v1/invoices          — создание накладной
-  POST /api/v1/invoices/{id}/accept — приёмка (Django Admin / оператор)
+  GET  /api/v1/invoices              — список накладных продавца
+  POST /api/v1/invoices              — создание накладной
+  POST /api/v1/invoices/{id}/accept  — приёмка
 """
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.auth.dependencies import get_current_seller
 from src.database import get_db
-from src.schemas.invoice import InvoiceAcceptRequest, InvoiceCreate, InvoiceResponse
+from src.schemas.invoice import (
+    InvoiceAcceptRequest,
+    InvoiceCreate,
+    InvoicePaginatedResponse,
+    InvoiceResponse,
+)
 from src.services import invoice_service
 
 router = APIRouter(prefix="/api/v1/invoices", tags=["Invoices"])
+
+
+@router.get("", response_model=InvoicePaginatedResponse)
+def list_invoices(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = Query(default=None),
+    seller_id: uuid.UUID = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """
+    Список накладных продавца (US-B2B-06).
+    Только свои — seller_id из JWT.
+    """
+    return invoice_service.list_invoices(db, seller_id, limit, offset, status)
 
 
 @router.post("", response_model=InvoiceResponse, status_code=201)

@@ -1,7 +1,9 @@
 """
 Бизнес-логика резервирования SKU.
 US-B2B-08: reserve (all-or-nothing) и unreserve (компенсация).
-SELECT FOR UPDATE для конкурентности. Идемпотентность по idempotency_key / order_id.
+SELECT FOR UPDATE для конкурентности на Postgres.
+Идемпотентность: reserve по idempotency_key, unreserve по order_id.
+Unreserve восстанавливает ровно то, что было зарезервировано под order_id.
 """
 
 import uuid
@@ -21,30 +23,37 @@ from src.schemas.reserve import (
 )
 
 
+def _is_postgres(db: Session) -> bool:
+    """Проверяем диалект БД — FOR UPDATE работает только на Postgres."""
+    return "postgresql" in str(db.bind.url) if db.bind else False
+
+
 def reserve_skus(
     db: Session,
     data: ReserveRequest,
 ) -> ReserveResponse:
     """
     All-or-nothing резервирование (B2B-8).
-    Если хотя бы один SKU не проходит — вся операция отклоняется.
-    SELECT FOR UPDATE для защиты от гонок.
+    SELECT FOR UPDATE на Postgres для защиты от гонок.
     Идемпотентность по idempotency_key.
+    Сохраняет связь order_id → items в ReserveOperation для unreserve.
     """
-    # Проверяем идемпотентность — если ключ уже обработан, возвращаем кэш
+    # Идемпотентность — если ключ уже обработан, возвращаем кэш
     existing = db.query(ReserveOperation).filter(
         ReserveOperation.idempotency_key == data.idempotency_key
     ).first()
     if existing:
         return ReserveResponse(**existing.result)
 
-    # Собираем sku_id → quantity из запроса
+    # Собираем sku_id → quantity
     requested = {item.sku_id: item.quantity for item in data.items}
     sku_ids = list(requested.keys())
 
-    # SELECT FOR UPDATE — блокируем строки SKU для атомарной проверки и обновления
-    # В SQLite FOR UPDATE не работает — используем обычный SELECT для тестов
-    skus = db.query(SKU).filter(SKU.id.in_(sku_ids)).all()
+    # SELECT FOR UPDATE на Postgres, обычный SELECT на SQLite (тесты)
+    query = db.query(SKU).filter(SKU.id.in_(sku_ids))
+    if _is_postgres(db):
+        query = query.with_for_update()
+    skus = query.all()
 
     # Проверяем что все SKU найдены
     found_ids = {sku.id for sku in skus}
@@ -85,8 +94,6 @@ def reserve_skus(
     now = datetime.now(timezone.utc)
     for sku in skus:
         needed = requested[sku.id]
-        sku.stock_quantity = sku.stock_quantity  # не меняем stock
-        # active = stock - reserved, поэтому меняем reserved
         sku.reserved_quantity += needed
 
         # Если active_quantity стал 0 → событие SKU_OUT_OF_STOCK для B2C
@@ -106,11 +113,16 @@ def reserve_skus(
                 target_url=f"{settings.b2c_url}/api/v1/events/product",
             ))
 
-    # Сохраняем результат для идемпотентности
+    # Сохраняем результат + связь order_id → items для unreserve
     result = {
         "order_id": str(data.order_id),
         "status": "RESERVED",
         "reserved_at": now.isoformat(),
+        # Храним items для проверки при unreserve
+        "_reserved_items": [
+            {"sku_id": str(item.sku_id), "quantity": item.quantity}
+            for item in data.items
+        ],
     }
     db.add(ReserveOperation(
         idempotency_key=data.idempotency_key,
@@ -119,7 +131,11 @@ def reserve_skus(
 
     db.commit()
 
-    return ReserveResponse(**result)
+    return ReserveResponse(
+        order_id=str(data.order_id),
+        status="RESERVED",
+        reserved_at=now.isoformat(),
+    )
 
 
 def unreserve_skus(
@@ -128,35 +144,66 @@ def unreserve_skus(
 ) -> InventoryOrderResponse:
     """
     Снятие резерва при отмене заказа (B2B-8, компенсация).
-    active_quantity += N, reserved_quantity -= N.
+    Идемпотентность по order_id.
+    Восстанавливает ровно то, что было зарезервировано под этот order_id.
+    Не доверяет входному quantity — берёт из сохранённой операции.
     """
-    requested = {item.sku_id: item.quantity for item in data.items}
-    sku_ids = list(requested.keys())
+    now = datetime.now(timezone.utc)
 
-    skus = db.query(SKU).filter(SKU.id.in_(sku_ids)).all()
+    # Ищем сохранённую операцию резервирования по order_id
+    reservation = db.query(ReserveOperation).filter(
+        ReserveOperation.result["order_id"].as_string() == str(data.order_id)
+    ).first()
 
-    found_ids = {sku.id for sku in skus}
-    missing = set(sku_ids) - found_ids
-    if missing:
+    # Fallback: поиск по всем записям (SQLite не поддерживает JSON path)
+    if not reservation:
+        all_ops = db.query(ReserveOperation).all()
+        for op in all_ops:
+            if op.result.get("order_id") == str(data.order_id):
+                reservation = op
+                break
+
+    if not reservation:
         raise HTTPException(
             status_code=404,
-            detail={"code": "NOT_FOUND", "message": "SKU not found"},
+            detail={"code": "NOT_FOUND", "message": "Reservation for this order_id not found"},
         )
 
-    # Снимаем резерв
-    for sku in skus:
-        qty = requested[sku.id]
-        if sku.reserved_quantity < qty:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "CONFLICT",
-                    "message": f"Cannot unreserve {qty} from SKU {sku.id}: only {sku.reserved_quantity} reserved",
-                },
-            )
-        sku.reserved_quantity -= qty
+    # Идемпотентность — если уже снят резерв (статус UNRESERVED), возвращаем кэш
+    if reservation.result.get("status") == "UNRESERVED":
+        return InventoryOrderResponse(
+            order_id=str(data.order_id),
+            status="UNRESERVED",
+            processed_at=reservation.result.get("unreserved_at", now.isoformat()),
+        )
 
-    now = datetime.now(timezone.utc)
+    # Берём items из сохранённой операции (не из запроса — защита от подмены)
+    reserved_items = reservation.result.get("_reserved_items", [])
+    if not reserved_items:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_REQUEST", "message": "No reserved items found for this order"},
+        )
+
+    # SELECT FOR UPDATE для Postgres
+    sku_ids = [uuid.UUID(item["sku_id"]) for item in reserved_items]
+    query = db.query(SKU).filter(SKU.id.in_(sku_ids))
+    if _is_postgres(db):
+        query = query.with_for_update()
+    skus = {sku.id: sku for sku in query.all()}
+
+    # Снимаем резерв по сохранённым данным
+    for item in reserved_items:
+        sku_id = uuid.UUID(item["sku_id"])
+        qty = item["quantity"]
+        sku = skus.get(sku_id)
+        if sku and sku.reserved_quantity >= qty:
+            sku.reserved_quantity -= qty
+
+    # Обновляем статус операции → UNRESERVED (для идемпотентности)
+    updated_result = {**reservation.result, "status": "UNRESERVED", "unreserved_at": now.isoformat()}
+    reservation.result = updated_result
+
     db.commit()
 
     return InventoryOrderResponse(

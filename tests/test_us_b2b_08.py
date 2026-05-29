@@ -222,3 +222,79 @@ def test_reserve_without_service_key_returns_401(client):
         "items": [{"sku_id": str(uuid.uuid4()), "quantity": 1}],
     })
     assert resp.status_code == 401
+
+
+def test_idempotent_unreserve_returns_200_without_double_deduction(
+    client, auth_headers, service_headers, seed_categories, db
+):
+    """
+    Идемпотентность unreserve: повторный вызов с тем же order_id
+    не вычитает reserved_quantity дважды.
+    """
+    product, sku = _create_sku_with_stock(
+        client, auth_headers, service_headers, seed_categories["mono_id"], db, stock=10
+    )
+
+    order_id = str(uuid.uuid4())
+
+    # Резервируем
+    client.post(RESERVE_URL, json={
+        "idempotency_key": str(uuid.uuid4()),
+        "order_id": order_id,
+        "items": [{"sku_id": sku["id"], "quantity": 3}],
+    }, headers=service_headers)
+
+    # Первый unreserve — OK
+    resp1 = client.post(UNRESERVE_URL, json={
+        "order_id": order_id,
+        "items": [{"sku_id": sku["id"], "quantity": 3}],
+    }, headers=service_headers)
+    assert resp1.status_code == 200
+    assert resp1.json()["status"] == "UNRESERVED"
+
+    # Повторный unreserve — идемпотентный (не вычитает дважды)
+    resp2 = client.post(UNRESERVE_URL, json={
+        "order_id": order_id,
+        "items": [{"sku_id": sku["id"], "quantity": 3}],
+    }, headers=service_headers)
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "UNRESERVED"
+
+    # В БД reserved=0 (не -3)
+    from src.models.sku import SKU as SKUModel
+    db_sku = db.query(SKUModel).filter(SKUModel.id == uuid.UUID(sku["id"])).first()
+    assert db_sku.reserved_quantity == 0
+
+
+def test_unreserve_uses_stored_quantities(
+    client, auth_headers, service_headers, seed_categories, db
+):
+    """
+    Unreserve берёт количества из сохранённой операции (не из запроса).
+    Защита от подмены quantity клиентом.
+    """
+    product, sku = _create_sku_with_stock(
+        client, auth_headers, service_headers, seed_categories["mono_id"], db, stock=10
+    )
+
+    order_id = str(uuid.uuid4())
+
+    # Резервируем 3
+    client.post(RESERVE_URL, json={
+        "idempotency_key": str(uuid.uuid4()),
+        "order_id": order_id,
+        "items": [{"sku_id": sku["id"], "quantity": 3}],
+    }, headers=service_headers)
+
+    # Unreserve с quantity=100 (попытка подмены) — снимет только 3
+    resp = client.post(UNRESERVE_URL, json={
+        "order_id": order_id,
+        "items": [{"sku_id": sku["id"], "quantity": 100}],
+    }, headers=service_headers)
+    assert resp.status_code == 200
+
+    # В БД reserved=0 (не -97)
+    from src.models.sku import SKU as SKUModel
+    db_sku = db.query(SKUModel).filter(SKUModel.id == uuid.UUID(sku["id"])).first()
+    assert db_sku.reserved_quantity == 0
+    assert db_sku.active_quantity == 10

@@ -221,3 +221,37 @@ def accept_invoice(
     # Перезагружаем для ответа
     invoice = _load_invoice(db, invoice_id)
     return _invoice_to_response(invoice)
+
+
+def list_invoices(
+    db: Session,
+    seller_id: uuid.UUID,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+) -> dict:
+    """
+    Список накладных продавца (B2B-6).
+    Только свои — seller_id из JWT.
+    """
+    from sqlalchemy import func
+
+    query = db.query(Invoice).options(
+        joinedload(Invoice.items)
+    ).filter(Invoice.seller_id == seller_id)
+
+    if status:
+        query = query.filter(Invoice.status == status)
+
+    total = db.query(func.count(Invoice.id)).filter(
+        Invoice.seller_id == seller_id
+    ).scalar()
+
+    invoices = query.order_by(Invoice.created_at.desc()).offset(offset).limit(limit).all()
+
+    return {
+        "items": [_invoice_to_response(inv) for inv in invoices],
+        "total_count": total,
+        "limit": limit,
+        "offset": offset,
+    }
