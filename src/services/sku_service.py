@@ -244,3 +244,100 @@ def update_sku(
     # Перезагружаем SKU со связями
     sku = db.query(SKU).filter(SKU.id == sku_id).first()
     return _sku_to_response(sku)
+
+
+def delete_sku(
+    db: Session,
+    sku_id: uuid.UUID,
+    seller_id: uuid.UUID,
+) -> None:
+    """
+    Удаление SKU (B2B-12).
+    Guardrails: HARD_BLOCKED → 403, reserved_quantity > 0 → 409.
+    Побочные эффекты:
+      - Последний SKU + ON_MODERATION → CREATED + событие DELETED в Moderation.
+      - active_quantity > 0 + MODERATED → событие SKU_OUT_OF_STOCK в B2C.
+    """
+    sku = db.query(SKU).filter(SKU.id == sku_id).first()
+
+    if not sku:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "SKU not found"},
+        )
+
+    # Ownership через parent product
+    product = db.query(Product).filter(Product.id == sku.product_id).first()
+    if not product or product.deleted:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "SKU not found"},
+        )
+
+    if product.seller_id != seller_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "NOT_OWNER", "message": "SKU does not belong to the authenticated seller"},
+        )
+
+    # HARD_BLOCKED — нельзя удалять
+    if product.status == ProductStatus.HARD_BLOCKED:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FORBIDDEN", "message": "Cannot delete SKU of hard-blocked product"},
+        )
+
+    # Активные резервы — нельзя удалять
+    if sku.reserved_quantity > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CONFLICT", "message": "Cannot delete SKU with active reserves"},
+        )
+
+    now = datetime.now(timezone.utc)
+
+    # Если active_quantity > 0 и товар MODERATED → событие SKU_OUT_OF_STOCK в B2C
+    if sku.active_quantity > 0 and product.status == ProductStatus.MODERATED:
+        db.add(Outbox(
+            idempotency_key=uuid.uuid5(uuid.NAMESPACE_URL, f"{sku.id}:SKU_DELETED_OOS"),
+            event_type="SKU_OUT_OF_STOCK",
+            payload={
+                "event_type": "SKU_OUT_OF_STOCK",
+                "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{sku.id}:SKU_DELETED_OOS")),
+                "occurred_at": now.isoformat(),
+                "payload": {
+                    "sku_id": str(sku.id),
+                    "product_id": str(product.id),
+                },
+            },
+            target_url=f"{settings.b2c_url}/api/v1/events/product",
+        ))
+
+    # Физическое удаление SKU (каскадно удалятся characteristics и images)
+    db.delete(sku)
+    db.flush()
+
+    # Считаем оставшиеся SKU у товара
+    remaining = db.query(SKU).filter(SKU.product_id == product.id).count()
+
+    # Последний SKU удалён + товар ON_MODERATION → CREATED + событие DELETED
+    if remaining == 0 and product.status == ProductStatus.ON_MODERATION:
+        product.status = ProductStatus.CREATED
+
+        idem_key = uuid.uuid5(uuid.NAMESPACE_URL, f"{product.id}:DELETED:last_sku")
+        db.add(Outbox(
+            idempotency_key=idem_key,
+            event_type="DELETED",
+            payload={
+                "event_type": "DELETED",
+                "idempotency_key": str(idem_key),
+                "occurred_at": now.isoformat(),
+                "payload": {
+                    "product_id": str(product.id),
+                    "seller_id": str(seller_id),
+                },
+            },
+            target_url=f"{settings.moderation_url}/api/v1/events/product",
+        ))
+
+    db.commit()
