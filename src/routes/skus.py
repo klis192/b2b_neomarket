@@ -1,6 +1,8 @@
 """
 Эндпоинты SKU.
-US-B2B-02: POST /api/v1/skus — создание варианта товара.
+US-B2B-02: POST /api/v1/skus — создание.
+US-B2B-03: PATCH /api/v1/skus/{id} — редактирование.
+US-B2B-12: DELETE /api/v1/skus/{id} — удаление.
 """
 
 import uuid
@@ -42,3 +44,18 @@ def update_sku(
     MODERATED/BLOCKED → ON_MODERATION + событие EDITED.
     """
     return sku_service.update_sku(db, sku_id, seller_id, data)
+
+
+@router.delete("/{sku_id}", status_code=204)
+def delete_sku(
+    sku_id: uuid.UUID,
+    seller_id: uuid.UUID = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """
+    Удаление SKU (US-B2B-12).
+    HARD_BLOCKED → 403. reserved_quantity > 0 → 409.
+    Последний SKU + ON_MODERATION → CREATED + событие DELETED.
+    """
+    sku_service.delete_sku(db, sku_id, seller_id)
+    return None

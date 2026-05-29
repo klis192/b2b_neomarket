@@ -1,11 +1,13 @@
 """
 Эндпоинты товаров.
-US-B2B-01: POST /api/v1/products — создание карточки товара.
+US-B2B-01: POST /api/v1/products — создание.
+US-B2B-05: GET /api/v1/products/{id} — просмотр.
+US-B2B-11: GET /api/v1/products — список товаров продавца.
 """
 
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from src.auth.dependencies import get_current_seller, get_optional_seller, require_service_key
@@ -14,6 +16,25 @@ from src.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from src.services import product_service
 
 router = APIRouter(prefix="/api/v1/products", tags=["Products"])
+
+
+@router.get("")
+def list_products(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = Query(default=None),
+    include_deleted: bool = Query(default=False),
+    seller_id: uuid.UUID = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """
+    Список товаров продавца (US-B2B-11).
+    Автоматический фильтр по seller_id из JWT — IDOR невозможен.
+    include_deleted=true — показывает удалённые товары.
+    """
+    return product_service.list_seller_products(
+        db, seller_id, limit, offset, status, include_deleted
+    )
 
 
 @router.post("", response_model=ProductResponse, status_code=201)

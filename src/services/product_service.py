@@ -382,3 +382,73 @@ def get_product_by_id_service(
         )
 
     return _product_to_response(product)
+
+
+def list_seller_products(
+    db: Session,
+    seller_id: uuid.UUID,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+    include_deleted: bool = False,
+) -> dict:
+    """
+    Список товаров продавца (B2B-11).
+    Автоматический фильтр по seller_id из JWT — IDOR невозможен.
+    Видны все статусы. Deleted видны только с include_deleted=true.
+    """
+    from sqlalchemy import func
+
+    query = db.query(Product).options(
+        joinedload(Product.images),
+        joinedload(Product.skus),
+    ).filter(Product.seller_id == seller_id)
+
+    # Фильтр по статусу
+    if status:
+        query = query.filter(Product.status == status)
+
+    # По умолчанию скрываем удалённые
+    if not include_deleted:
+        query = query.filter(Product.deleted == False)  # noqa: E712
+
+    # Считаем total
+    count_q = db.query(func.count(Product.id)).filter(Product.seller_id == seller_id)
+    if status:
+        count_q = count_q.filter(Product.status == status)
+    if not include_deleted:
+        count_q = count_q.filter(Product.deleted == False)  # noqa: E712
+    total_count = count_q.scalar()
+
+    products = query.order_by(Product.created_at.desc()).offset(offset).limit(limit).all()
+
+    items = []
+    for p in products:
+        # min_price — минимальная цена среди SKU
+        prices = [sku.price - sku.discount for sku in p.skus if sku.active_quantity > 0]
+        min_price = min(prices) if prices else None
+
+        # cover_image — первое фото
+        cover = None
+        if p.images:
+            sorted_imgs = sorted(p.images, key=lambda x: x.ordering)
+            cover = sorted_imgs[0].url
+
+        items.append({
+            "id": str(p.id),
+            "title": p.title,
+            "slug": p.slug,
+            "status": p.status.value,
+            "category_id": str(p.category_id),
+            "deleted": p.deleted,
+            "created_at": p.created_at.isoformat() if p.created_at else "",
+            "min_price": min_price,
+            "cover_image": cover,
+        })
+
+    return {
+        "items": items,
+        "total_count": total_count,
+        "limit": limit,
+        "offset": offset,
+    }
