@@ -237,3 +237,45 @@ def test_empty_items_returns_400(client, auth_headers):
     """Пустой items → 400."""
     resp = client.post(INVOICES_URL, json={"items": []}, headers=auth_headers)
     assert resp.status_code == 400
+
+
+def test_list_invoices_returns_only_own(
+    client, auth_headers, other_auth_headers, seed_categories, db
+):
+    """
+    GET /api/v1/invoices — продавец видит только свои.
+    Чужой продавец видит пустой список.
+    """
+    product, sku = _create_moderated_product_with_sku(
+        client, auth_headers, seed_categories["mono_id"], db
+    )
+
+    # Создаём 2 накладные
+    inv1 = client.post(INVOICES_URL, json={
+        "items": [{"sku_id": sku["id"], "quantity": 10}],
+    }, headers=auth_headers).json()
+
+    inv2 = client.post(INVOICES_URL, json={
+        "items": [{"sku_id": sku["id"], "quantity": 5}],
+    }, headers=auth_headers).json()
+
+    # Принимаем первую
+    client.post(f"{INVOICES_URL}/{inv1['id']}/accept")
+
+    # Seller видит обе
+    resp = client.get(INVOICES_URL, headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_count"] == 2
+    assert len(body["items"]) == 2
+
+    # Проверяем статусы
+    statuses = {item["id"]: item["status"] for item in body["items"]}
+    assert statuses[inv1["id"]] == "ACCEPTED"
+    assert statuses[inv2["id"]] == "CREATED"
+
+    # Другой продавец видит пустой список
+    resp2 = client.get(INVOICES_URL, headers=other_auth_headers)
+    assert resp2.status_code == 200
+    assert resp2.json()["total_count"] == 0
+    assert resp2.json()["items"] == []
