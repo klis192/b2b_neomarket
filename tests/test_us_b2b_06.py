@@ -136,7 +136,7 @@ def test_accept_full_increases_stock_quantity(
     }, headers=auth_headers).json()
 
     # Полная приёмка (пустое тело)
-    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -165,7 +165,7 @@ def test_accept_partial(
 
     # Частичная приёмка: принимаем 7 из 10
     item_id = inv["items"][0]["id"]
-    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept", json={
+    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers, json={
         "accepted_items": [
             {"invoice_item_id": item_id, "accepted_quantity": 7},
         ],
@@ -194,7 +194,7 @@ def test_accept_zero_cancelled(
     }, headers=auth_headers).json()
 
     item_id = inv["items"][0]["id"]
-    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept", json={
+    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers, json={
         "accepted_items": [
             {"invoice_item_id": item_id, "accepted_quantity": 0},
         ],
@@ -217,10 +217,10 @@ def test_accept_already_accepted_returns_409(
     }, headers=auth_headers).json()
 
     # Первая приёмка — OK
-    client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+    client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
 
     # Повторная — 409
-    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+    resp = client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
     assert resp.status_code == 409
     assert resp.json()["code"] == "CONFLICT"
 
@@ -260,7 +260,7 @@ def test_list_invoices_returns_only_own(
     }, headers=auth_headers).json()
 
     # Принимаем первую
-    client.post(f"{INVOICES_URL}/{inv1['id']}/accept")
+    client.post(f"{INVOICES_URL}/{inv1['id']}/accept", headers=auth_headers)
 
     # Seller видит обе
     resp = client.get(INVOICES_URL, headers=auth_headers)

@@ -45,7 +45,7 @@ def _create_moderated_product_with_stock(client, auth_headers, service_headers, 
     inv = client.post(INVOICES_URL, json={
         "items": [{"sku_id": sku["id"], "quantity": 10}],
     }, headers=auth_headers).json()
-    client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+    client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
 
     return product, sku
 

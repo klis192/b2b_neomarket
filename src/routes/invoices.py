@@ -57,11 +57,12 @@ def create_invoice(
 def accept_invoice(
     invoice_id: uuid.UUID,
     data: InvoiceAcceptRequest | None = None,
+    seller_id: uuid.UUID = Depends(get_current_seller),
     db: Session = Depends(get_db),
 ):
     """
-    Приёмка накладной (US-B2B-06, Django Admin / оператор).
-    Пустое тело → полная приёмка. accepted_items → частичная.
-    Атомарно обновляет stock_quantity.
+    Приёмка накладной (US-B2B-06).
+    Проверяет ownership — только владелец накладной может принять.
+    Фиксирует актора в accepted_by.
     """
-    return invoice_service.accept_invoice(db, invoice_id, data)
+    return invoice_service.accept_invoice(db, invoice_id, seller_id, data)

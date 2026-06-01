@@ -147,13 +147,13 @@ def create_invoice(
 def accept_invoice(
     db: Session,
     invoice_id: uuid.UUID,
+    seller_id: uuid.UUID,
     data: InvoiceAcceptRequest | None,
 ) -> InvoiceResponse:
     """
     Приёмка накладной (B2B-6).
-    Если accepted_items не передан → полная приёмка (accepted_quantity = quantity).
-    Частичная приёмка: для каждой позиции указывается accepted_quantity.
-    Атомарно обновляет stock_quantity SKU.
+    Ownership check: только владелец накладной может принять.
+    accepted_by фиксирует актора.
     """
     invoice = _load_invoice(db, invoice_id)
 
@@ -161,6 +161,13 @@ def accept_invoice(
         raise HTTPException(
             status_code=404,
             detail={"code": "NOT_FOUND", "message": "Invoice not found"},
+        )
+
+    # Ownership check — только владелец
+    if invoice.seller_id != seller_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "NOT_OWNER", "message": "Invoice does not belong to the authenticated seller"},
         )
 
     # Нельзя принять уже принятую/отменённую
@@ -215,6 +222,7 @@ def accept_invoice(
         invoice.status = InvoiceStatus.PARTIALLY_ACCEPTED
 
     invoice.accepted_at = datetime.now(timezone.utc)
+    invoice.accepted_by = seller_id
 
     db.commit()
 
