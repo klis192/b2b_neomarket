@@ -42,7 +42,7 @@ def _create_reserved_sku(client, auth_headers, service_headers, category_id, db,
     inv = client.post(INVOICES_URL, json={
         "items": [{"sku_id": sku["id"], "quantity": stock}],
     }, headers=auth_headers).json()
-    client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+    client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
 
     # Резервируем
     order_id = str(uuid.uuid4())

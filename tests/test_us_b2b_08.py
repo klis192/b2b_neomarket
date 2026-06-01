@@ -43,7 +43,7 @@ def _create_sku_with_stock(client, auth_headers, service_headers, category_id, d
         inv = client.post(INVOICES_URL, json={
             "items": [{"sku_id": sku["id"], "quantity": stock}],
         }, headers=auth_headers).json()
-        client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+        client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
 
     return product, sku
 

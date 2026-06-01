@@ -53,7 +53,7 @@ def test_delete_sku_with_active_reserves_returns_409(
     inv = client.post(INVOICES_URL, json={
         "items": [{"sku_id": sku["id"], "quantity": 10}],
     }, headers=auth_headers).json()
-    client.post(f"{INVOICES_URL}/{inv['id']}/accept")
+    client.post(f"{INVOICES_URL}/{inv['id']}/accept", headers=auth_headers)
 
     # Резервируем 3
     client.post(RESERVE_URL, json={
