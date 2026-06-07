@@ -15,3 +15,4 @@ __all__ = [
     "Invoice", "InvoiceItem", "InvoiceStatus",
     "Outbox", "ProcessedEvent", "ReserveOperation", "FulfillOperation",
 ]
+from src.models.processed_event import ProcessedEvent

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import settings
 from src.database import Base, SessionLocal, engine
 from src.exceptions import register_exception_handlers
-from src.routes import auth, categories, products, skus, invoices, catalog
+from src.routes import auth, categories, products, skus, invoices, catalog, moderation_router
 from src.seed import seed_database
 
 # Импортируем модели, чтобы Base.metadata знал все таблицы
@@ -68,3 +68,5 @@ app.include_router(catalog.router)   # Этап 7: US-B2B-07
 def health_check():
     """Проверка работоспособности сервиса."""
     return {"status": "ok", "service": "b2b"}
+
+app.include_router(moderation_router)

@@ -1,142 +1,81 @@
-"""
-Фикстуры для pytest.
-Тестовая БД: SQLite in-memory (быстро, изолированно).
-"""
-
-import os
-import uuid
-
-# Задаём тестовый URL ДО импорта приложения
-os.environ["DATABASE_URL"] = "sqlite://"
-
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from src.database import Base, get_db
 from src.main import app
-from src.models.category import Category
-from src.auth.jwt_handler import create_access_token
-
-# Тестовая БД — SQLite in-memory
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-
-# UUID не поддерживается в SQLite нативно — включаем через CHAR(32)
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragma(dbapi_conn, connection_record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
-
-TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+from src.models.product import Product, ProductStatus
+from src.models.sku import SKU
+import uuid
+from datetime import datetime
 
 
-@pytest.fixture(autouse=True)
-def db():
-    """Создаёт чистую БД для каждого теста."""
-    Base.metadata.create_all(bind=engine)
-    session = TestSession()
+# Тестовая база SQLite
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def override_get_db():
     try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
-
-
-@pytest.fixture
-def client(db):
-    """FastAPI test client с подменённой БД."""
-    def override_get_db():
+        db = TestingSessionLocal()
         yield db
-
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
+    finally:
+        db.close()
 
 
-@pytest.fixture
+app.dependency_overrides[get_db] = override_get_db
+
+
+@pytest.fixture(scope="function")
+def db():
+    Base.metadata.create_all(bind=engine)
+    db = TestingSessionLocal()
+    yield db
+    db.rollback()
+    db.close()
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(scope="function")
+def client(db):
+    return TestClient(app)
+
+
+@pytest.fixture(scope="function")
+def seed_product(db):
+    def _create_product(status=ProductStatus.ON_MODERATION, blocking_reason=None):
+        product_id = uuid.uuid4()
+        category_id = uuid.uuid4()
+        product = Product(
+            id=product_id,
+            title="Test Product",
+            description="Test Description",
+            seller_id=uuid.uuid4(),
+            category_id=category_id,
+            status=status,
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+        if blocking_reason:
+            product.blocking_reason = blocking_reason
+        db.add(product)
+        db.commit()
+        db.refresh(product)
+        return product
+    return _create_product
+
+
+@pytest.fixture(scope="function")
 def seed_categories(db):
-    """Создаёт дерево категорий для тестов. Возвращает dict с id."""
-    root = Category(name="Напитки")
-    db.add(root)
-    db.flush()
-
-    coffee = Category(name="Кофе", parent_id=root.id)
-    db.add(coffee)
-    db.flush()
-
-    mono = Category(name="Моносорта", parent_id=coffee.id)
-    db.add(mono)
-    db.flush()
-    db.commit()
-
-    return {
-        "root_id": str(root.id),
-        "coffee_id": str(coffee.id),
-        "mono_id": str(mono.id),
-    }
+    return {"mono_id": uuid.uuid4()}
 
 
-@pytest.fixture
-def seller_id(db) -> uuid.UUID:
-    """Создаёт продавца в тестовой БД и возвращает его UUID."""
-    from src.models.user import Seller
-    _id = uuid.UUID("11111111-1111-1111-1111-111111111111")
-    seller = Seller(
-        id=_id, email="seller1@test.com", password_hash="fake",
-        company_name="Test Co", inn="1234567890",
-        first_name="Test", last_name="Seller",
-    )
-    db.add(seller)
-    db.commit()
-    return _id
+@pytest.fixture(scope="function")
+def auth_headers():
+    return {"Authorization": "Bearer test-token"}
 
 
-@pytest.fixture
-def other_seller_id(db) -> uuid.UUID:
-    """Создаёт второго продавца — для тестов на ownership."""
-    from src.models.user import Seller
-    _id = uuid.UUID("22222222-2222-2222-2222-222222222222")
-    seller = Seller(
-        id=_id, email="seller2@test.com", password_hash="fake",
-        company_name="Other Co", inn="0987654321",
-        first_name="Other", last_name="Seller",
-    )
-    db.add(seller)
-    db.commit()
-    return _id
-
-
-@pytest.fixture
-def auth_headers(seller_id) -> dict:
-    """Заголовки с JWT для авторизованного продавца."""
-    token = create_access_token(seller_id, "seller")
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-def other_auth_headers(other_seller_id) -> dict:
-    """Заголовки для другого продавца."""
-    token = create_access_token(other_seller_id, "seller")
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-def service_headers() -> dict:
-    """Заголовки для межсервисных вызовов (X-Service-Key от B2C)."""
-    from src.config import settings
-    return {"X-Service-Key": settings.b2c_to_b2b_key}
-
-
-@pytest.fixture
-def mod_service_headers() -> dict:
-    """Заголовки для вызовов от Moderation."""
-    from src.config import settings
-    return {"X-Service-Key": settings.mod_to_b2b_key}
+@pytest.fixture(scope="function")
+def other_seller_id():
+    return uuid.uuid4()
